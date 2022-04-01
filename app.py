@@ -1,42 +1,64 @@
-#!/home/naveen/YTS/venv/bin
-from flask import Flask
+from flask import Flask,render_template,request
+from urllib import parse as urlparse
+from youtube_transcript_api import YouTubeTranscriptApi
+from transformers import pipeline
+import json
+from summarizer import Summarizer,TransformerSummarizer
 
-app=Flask(__name__)
+app = Flask(__name__)
+ 
+@app.route('/form')
+def form():
+    return render_template('form.html')
+ 
+@app.route('/data/', methods = ['POST', 'GET'])
+def data():
+    if request.method == 'GET':
+        return f"The URL /data is accessed directly. Try going to '/form' to submit form"
+    if request.method == 'POST':
+        form_data = request.form
+        vid_link = form_data["Video Link"]
+        vid = video_id(vid_link)
+        summ = yt_summarizer(vid)
+        vid_data = {"Video Link": summ}
+        return render_template('data.html',form_data = vid_data)
 
-@app.route('/')
-def index():
-    return "hello world!"
 
-@app.route('/<video_id>')
-def get_transcript(video_id):
-    from youtube_transcript_api import YouTubeTranscriptApi
-    import transformers 
-    import sentencepiece 
-    data=YouTubeTranscriptApi.get_transcript(video_id)
-    transcript=''
-    for value in data:
-        for key,val in value.items():
-            if key=='text':
-                transcript+=val
-    from transformers import T5ForConditionalGeneration, T5Tokenizer
-    #T5 small
-    model = T5ForConditionalGeneration.from_pretrained("t5-small")
-    tokenizer = T5Tokenizer.from_pretrained("t5-small")
-    inputs = tokenizer.encode("summarize: "+transcript, return_tensors="pt", max_length=512, truncation=True)
-    outputs = model.generate(
-        inputs, 
-        max_length=150, 
-        min_length=40, 
-        length_penalty=2.0, 
-        num_beams=4, 
-        early_stopping=True)
-    output=' Text:-\n' + transcript + '\n\nSummary:-\n'
-    output+=tokenizer.decode(outputs[0])
-    return output
+def video_id(value):
+    query = urlparse.urlparse(value)
+    if query.hostname == 'youtu.be':
+        return query.path[1:]
+    if query.hostname in ('www.youtube.com', 'youtube.com'):
+        if query.path == '/watch':
+            p = urlparse.parse_qs(query.query)
+            return p['v'][0]
+        if query.path[:7] == '/embed/':
+            return query.path.split('/')[2]
+        if query.path[:3] == '/v/':
+            return query.path.split('/')[2]
+    return None
 
-@app.errorhandler(404)
-def not_found(e):
-    return "404.html"
+def yt_summarizer(vid):
+    subs = YouTubeTranscriptApi.get_transcript(vid)
+    outfile = open('output.txt', 'w')
+    sub_list1 = []
+    subs_list2 = []
+    for i in range(len(subs)):
+        sub_list1.append(subs[i]['text'])
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    for x in sub_list1:
+        subs_list2.append(x.replace("\n", " "))
+
+    final_subtitles = ""
+
+    for y in subs_list2:
+        final_subtitles += y + " "
+
+    text = final_subtitles
+    outfile.write(final_subtitles)
+
+    bert_model = Summarizer()
+    bert_summary = ''.join(bert_model(text, min_length=60))
+    return bert_summary
+
+app.run(host='localhost', port=5000)
